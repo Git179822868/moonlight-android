@@ -2,6 +2,7 @@ package com.limelight;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 
@@ -20,6 +21,8 @@ import com.limelight.utils.Dialog;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.SpinnerDialog;
+import com.limelight.utils.TvActionDialog;
+import com.limelight.utils.TvUtils;
 import com.limelight.utils.UiHelper;
 
 import android.app.Activity;
@@ -62,6 +65,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     private boolean suspendGridUpdates;
     private boolean inForeground;
     private boolean showHiddenApps;
+    private android.app.Dialog tvActionDialog;
     private HashSet<Integer> hiddenAppIds = new HashSet<>();
 
     private final static int START_OR_RESUME_ID = 1;
@@ -364,6 +368,11 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs();
 
+        if (tvActionDialog != null) {
+            tvActionDialog.dismiss();
+            tvActionDialog = null;
+        }
+
         if (managerBinder != null) {
             unbindService(serviceConnection);
         }
@@ -619,8 +628,132 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
     @Override
     public int getAdapterFragmentLayoutId() {
-        return PreferenceConfiguration.readPreferences(AppView.this).smallIconMode ?
+        return !TvUtils.isTelevision(this) && PreferenceConfiguration.readPreferences(AppView.this).smallIconMode ?
                     R.layout.app_grid_view_small : R.layout.app_grid_view;
+    }
+
+    private boolean canCreateShortcut(View targetView) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || targetView == null) {
+            return false;
+        }
+        ImageView imageView = targetView.findViewById(R.id.grid_image);
+        return imageView != null && imageView.getDrawable() instanceof BitmapDrawable &&
+                ((BitmapDrawable)imageView.getDrawable()).getBitmap() != null;
+    }
+
+    private void runQuitAction(final AppObject app, final Runnable onComplete) {
+        suspendGridUpdates = true;
+        ServerHelper.doQuit(this, computer, app.app, managerBinder, new Runnable() {
+            @Override
+            public void run() {
+                suspendGridUpdates = false;
+                if (poller != null) {
+                    poller.pollNow();
+                }
+                if (onComplete != null) {
+                    onComplete.run();
+                }
+            }
+        });
+    }
+
+    private void showTvQuitConfirmation(final AppObject app, final Runnable onYes) {
+        List<TvActionDialog.Action> actions = new ArrayList<>();
+        actions.add(new TvActionDialog.Action(getString(R.string.yes), onYes));
+        actions.add(new TvActionDialog.Action(getString(R.string.no), null));
+        tvActionDialog = TvActionDialog.show(this, app.app.getAppName(),
+                getString(R.string.applist_quit_confirmation), actions);
+    }
+
+    private void showTvAppActions(final AppObject app, final View targetView) {
+        List<TvActionDialog.Action> actions = new ArrayList<>();
+
+        if (lastRunningAppId != 0) {
+            if (lastRunningAppId == app.app.getAppId()) {
+                actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_resume), new Runnable() {
+                    @Override
+                    public void run() {
+                        ServerHelper.doStart(AppView.this, app.app, computer, managerBinder);
+                    }
+                }));
+                actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_quit), new Runnable() {
+                    @Override
+                    public void run() {
+                        showTvQuitConfirmation(app, new Runnable() {
+                            @Override
+                            public void run() {
+                                runQuitAction(app, null);
+                            }
+                        });
+                    }
+                }));
+            }
+            else {
+                actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_quit_and_start), new Runnable() {
+                    @Override
+                    public void run() {
+                        showTvQuitConfirmation(app, new Runnable() {
+                            @Override
+                            public void run() {
+                                ServerHelper.doStart(AppView.this, app.app, computer, managerBinder);
+                            }
+                        });
+                    }
+                }));
+            }
+        }
+        else {
+            actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_resume), new Runnable() {
+                @Override
+                public void run() {
+                    ServerHelper.doStart(AppView.this, app.app, computer, managerBinder);
+                }
+            }));
+        }
+
+        if (lastRunningAppId != app.app.getAppId() || app.isHidden) {
+            CharSequence hideLabel = (app.isHidden ? "✓ " : "") +
+                    getString(R.string.applist_menu_hide_app);
+            actions.add(new TvActionDialog.Action(hideLabel, new Runnable() {
+                @Override
+                public void run() {
+                    if (app.isHidden) {
+                        hiddenAppIds.remove(app.app.getAppId());
+                    }
+                    else {
+                        hiddenAppIds.add(app.app.getAppId());
+                    }
+                    updateHiddenApps(false);
+                }
+            }));
+        }
+
+        actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_details), new Runnable() {
+            @Override
+            public void run() {
+                List<TvActionDialog.Action> detailActions = new ArrayList<>();
+                detailActions.add(new TvActionDialog.Action(getString(R.string.applist_menu_cancel), null));
+                tvActionDialog = TvActionDialog.show(AppView.this,
+                        getString(R.string.title_details), app.app.toString(), detailActions);
+            }
+        }));
+
+        if (canCreateShortcut(targetView)) {
+            actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_scut), new Runnable() {
+                @Override
+                public void run() {
+                    ImageView imageView = targetView.findViewById(R.id.grid_image);
+                    Bitmap bitmap = ((BitmapDrawable)imageView.getDrawable()).getBitmap();
+                    if (!shortcutHelper.createPinnedGameShortcut(computer, app.app, bitmap)) {
+                        Toast.makeText(AppView.this,
+                                getString(R.string.unable_to_pin_shortcut), Toast.LENGTH_LONG).show();
+                    }
+                }
+            }));
+        }
+
+        actions.add(new TvActionDialog.Action(getString(R.string.applist_menu_cancel), null));
+        tvActionDialog = TvActionDialog.show(this, app.app.getAppName(), null, actions);
     }
 
     @Override
@@ -634,14 +767,30 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
                 // Only open the context menu if something is running, otherwise start it
                 if (lastRunningAppId != 0) {
-                    openContextMenu(arg1);
+                    if (TvUtils.isTelevision(AppView.this)) {
+                        showTvAppActions(app, arg1);
+                    }
+                    else {
+                        openContextMenu(arg1);
+                    }
                 } else {
                     ServerHelper.doStart(AppView.this, app.app, computer, managerBinder);
                 }
             }
         });
         UiHelper.applyStatusBarPadding(listView);
-        registerForContextMenu(listView);
+        if (TvUtils.isTelevision(this)) {
+            listView.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+                @Override
+                public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                    showTvAppActions((AppObject)appGridAdapter.getItem(position), view);
+                    return true;
+                }
+            });
+        }
+        else {
+            registerForContextMenu(listView);
+        }
         listView.requestFocus();
     }
 

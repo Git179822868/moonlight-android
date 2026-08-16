@@ -167,6 +167,33 @@
                 android:value="true" />
         </activity>
 
+        <!--
+             TV streaming has a separate Activity lifecycle. In particular, it
+             must not use singleTask: a resumed singleTask Game can retain an
+             already-destroyed Surface/decoder and display a blank page.
+        -->
+        <activity
+            android:name=".TvGame"
+            android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection"
+            android:noHistory="true"
+            android:supportsPictureInPicture="false"
+            android:resizeableActivity="true"
+            android:enableOnBackInvokedCallback="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/StreamTheme"
+            android:preferMinimalPostProcessing="true">
+
+            <meta-data android:name="WindowManagerPreference:FreeformWindowSize" android:value="system-default" />
+            <meta-data android:name="WindowManagerPreference:FreeformWindowOrientation" android:value="landscape" />
+
+            <meta-data
+                android:name="com.nvidia.immediateInput"
+                android:value="true" />
+            <meta-data
+                android:name="com.nvidia.rawCursorInput"
+                android:value="true" />
+        </activity>
+
         <service
             android:name=".discovery.DiscoveryService"
             android:label="mDNS PC Auto-Discovery Service" />

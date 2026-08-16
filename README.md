@@ -1,5 +1,10 @@
 # Moonlight Android
 
+> **Android TV 改造版：** 本分支针对部分电视、电视盒子和投影仪上的空白弹窗、
+> 遥控器操作、应用封面尺寸及串流二次进入问题进行了适配。
+> 详细功能、适用场景、安装方法和 APK 下载请查看
+> [《Moonlight Android TV 改造版说明》](TV_EDITION_README.zh-CN.md)。
+
 [![AppVeyor Build Status](https://ci.appveyor.com/api/projects/status/232a8tadrrn8jv0k/branch/master?svg=true)](https://ci.appveyor.com/project/cgutman/moonlight-android/branch/master)
 [![Translation Status](https://hosted.weblate.org/widgets/moonlight/-/moonlight-android/svg-badge.svg)](https://hosted.weblate.org/projects/moonlight/moonlight-android/)
 

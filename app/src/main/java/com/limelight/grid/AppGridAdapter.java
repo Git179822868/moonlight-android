@@ -16,6 +16,7 @@ import com.limelight.grid.assets.MemoryAssetLoader;
 import com.limelight.grid.assets.NetworkAssetLoader;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.utils.TvUtils;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -39,7 +40,7 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
     private ArrayList<AppView.AppObject> allApps = new ArrayList<>();
 
     public AppGridAdapter(Context context, PreferenceConfiguration prefs, ComputerDetails computer, String uniqueId, boolean showHiddenApps) {
-        super(context, getLayoutIdForPreferences(prefs));
+        super(context, getLayoutIdForPreferences(context, prefs));
 
         this.computer = computer;
         this.uniqueId = uniqueId;
@@ -73,8 +74,10 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
         notifyDataSetChanged();
     }
 
-    private static int getLayoutIdForPreferences(PreferenceConfiguration prefs) {
-        if (prefs.smallIconMode) {
+    private static int getLayoutIdForPreferences(Context context, PreferenceConfiguration prefs) {
+        // TV always uses large cards. Some vendor firmware reports a phone-sized
+        // smallestWidth and incorrectly persists small-icon mode.
+        if (prefs.smallIconMode && !TvUtils.isTelevision(context)) {
             return R.layout.app_grid_item_small;
         }
         else {
@@ -86,7 +89,7 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
         int dpi = context.getResources().getDisplayMetrics().densityDpi;
         int dp;
 
-        if (prefs.smallIconMode) {
+        if (prefs.smallIconMode && !TvUtils.isTelevision(context)) {
             dp = SMALL_WIDTH_DP;
         }
         else {
@@ -112,7 +115,7 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
                 BitmapFactory.decodeResource(context.getResources(), R.drawable.no_app_image));
 
         // This will trigger the view to reload with the new layout
-        setLayoutId(getLayoutIdForPreferences(prefs));
+        setLayoutId(getLayoutIdForPreferences(context, prefs));
     }
 
     public void cancelQueuedOperations() {
