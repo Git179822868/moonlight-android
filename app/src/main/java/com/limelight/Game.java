@@ -1273,6 +1273,22 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return false;
     }
 
+    private boolean isTelevisionRemoteExitKey(KeyEvent event) {
+        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK) &&
+                !getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION)) {
+            return false;
+        }
+
+        // Keep gamepad buttons available to the streamed PC. This only reserves
+        // the Back/B button from non-game-controller TV remotes for exiting.
+        if (ControllerHandler.isGameControllerDevice(event.getDevice())) {
+            return false;
+        }
+
+        return event.getKeyCode() == KeyEvent.KEYCODE_BACK ||
+                event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_B;
+    }
+
     // We cannot simply use modifierFlags for all key event processing, because
     // some IMEs will not generate real key events for pressing Shift. Instead
     // they will simply send key events with isShiftPressed() returning true,
@@ -1310,6 +1326,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
+        }
+
+        // TV remotes should always be able to cancel a stream or a pending
+        // connection. Without this, Back is sent to the PC as keyboard input.
+        if (isTelevisionRemoteExitKey(event)) {
+            if (event.getRepeatCount() == 0) {
+                finish();
+            }
+            return true;
         }
 
         // Handle a synthetic back button event that some Android OS versions
@@ -1392,6 +1417,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
+        }
+
+        if (isTelevisionRemoteExitKey(event)) {
+            return true;
         }
 
         // Handle a synthetic back button event that some Android OS versions
@@ -2491,6 +2520,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         if (!attemptedConnection) {
             attemptedConnection = true;
+            connecting = true;
 
             // Update GameManager state to indicate we're "loading" while connecting
             UiHelper.notifyStreamConnecting(Game.this);
@@ -2547,7 +2577,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // Let the decoder know immediately that the surface is gone
             decoderRenderer.prepareForStop();
 
-            if (connected) {
+            if (connecting || connected) {
                 stopConnection();
             }
         }

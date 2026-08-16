@@ -2,6 +2,7 @@ package com.limelight.preferences;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.graphics.Color;
 import android.os.Bundle;
 import android.preference.DialogPreference;
 import android.util.AttributeSet;
@@ -77,6 +78,7 @@ public class SeekBarPreference extends DialogPreference
 
         TextView splashText = new TextView(context);
         splashText.setPadding(30, 10, 30, 10);
+        splashText.setTextColor(Color.BLACK);
         if (dialogMessage != null) {
             splashText.setText(dialogMessage);
         }
@@ -85,6 +87,7 @@ public class SeekBarPreference extends DialogPreference
         valueText = new TextView(context);
         valueText.setGravity(Gravity.CENTER_HORIZONTAL);
         valueText.setTextSize(32);
+        valueText.setTextColor(Color.BLACK);
         // Default text for value; hides bug where OnSeekBarChangeListener isn't called when opacity is 0%
         valueText.setText("0%");
         params = new LinearLayout.LayoutParams(
@@ -107,15 +110,7 @@ public class SeekBarPreference extends DialogPreference
                     return;
                 }
 
-                String t;
-                if (divisor != 1) {
-                    float floatValue = roundedValue / (float)divisor;
-                    t = String.format((Locale)null, "%.1f", floatValue);
-                }
-                else {
-                    t = String.valueOf(value);
-                }
-                valueText.setText(suffix == null ? t : t.concat(suffix.length() > 1 ? " "+suffix : suffix));
+                updateValueText(roundedValue);
             }
 
             @Override
@@ -136,6 +131,7 @@ public class SeekBarPreference extends DialogPreference
             seekBar.setKeyProgressIncrement(keyStepSize);
         }
         seekBar.setProgress(currentValue);
+        updateValueText(currentValue);
 
         return layout;
     }
@@ -148,6 +144,7 @@ public class SeekBarPreference extends DialogPreference
             seekBar.setKeyProgressIncrement(keyStepSize);
         }
         seekBar.setProgress(currentValue);
+        updateValueText(currentValue);
     }
 
     @Override
@@ -170,6 +167,17 @@ public class SeekBarPreference extends DialogPreference
     }
     public int getProgress() {
         return currentValue;
+    }
+
+    private void updateValueText(int value) {
+        String text;
+        if (divisor != 1) {
+            text = String.format((Locale)null, "%.1f", value / (float) divisor);
+        }
+        else {
+            text = String.valueOf(value);
+        }
+        valueText.setText(suffix == null ? text : text.concat(suffix.length() > 1 ? " " + suffix : suffix));
     }
 
     @Override

@@ -8,6 +8,7 @@ import com.limelight.AppView;
 import com.limelight.Game;
 import com.limelight.R;
 import com.limelight.ShortcutTrampoline;
+import com.limelight.TvGame;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -54,7 +55,11 @@ public class ServerHelper {
 
     public static Intent createStartIntent(Activity parent, NvApp app, ComputerDetails computer,
                                            ComputerManagerService.ComputerManagerBinder managerBinder) {
-        Intent intent = new Intent(parent, Game.class);
+        // Android TV uses a dedicated, standard-launch Activity. Reusing the phone
+        // Game Activity's singleTask instance can return to an Activity whose
+        // Surface and decoder have already been torn down, leaving a blank page.
+        boolean isTelevision = TvUtils.isTelevision(parent);
+        Intent intent = new Intent(parent, isTelevision ? TvGame.class : Game.class);
         intent.putExtra(Game.EXTRA_HOST, computer.activeAddress.address);
         intent.putExtra(Game.EXTRA_PORT, computer.activeAddress.port);
         intent.putExtra(Game.EXTRA_HTTPS_PORT, computer.httpsPort);

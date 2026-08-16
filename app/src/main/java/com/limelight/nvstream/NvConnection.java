@@ -45,9 +45,17 @@ public class NvConnection {
     private LimelightCryptoProvider cryptoProvider;
     private String uniqueId;
     private ConnectionContext context;
-    private static Semaphore connectionAllowed = new Semaphore(1);
+    // Serialize the complete host resume/launch + native connection lifecycle.
+    // Fair ordering is important on TV, where a user may quickly leave and
+    // re-enter a session while the previous decoder is still shutting down.
+    private static final Semaphore connectionAllowed = new Semaphore(1, true);
     private final boolean isMonkey;
     private final Context appContext;
+    private final Object lifecycleLock = new Object();
+    private volatile boolean stopping;
+    private boolean connectionPermitAcquired;
+    private boolean bridgeInitialized;
+    private boolean startInProgress;
 
     public NvConnection(Context appContext, ComputerDetails.AddressTuple host, int httpsPort, String uniqueId, StreamConfiguration config, LimelightCryptoProvider cryptoProvider, X509Certificate serverCert)
     {
@@ -88,17 +96,48 @@ public class NvConnection {
 
     public void stop() {
         // Interrupt any pending connection. This is thread-safe.
+        stopping = true;
         MoonBridge.interruptConnection();
 
         // Moonlight-core is not thread-safe with respect to connection start and stop, so
         // we must not invoke that functionality in parallel.
         synchronized (MoonBridge.class) {
-            MoonBridge.stopConnection();
-            MoonBridge.cleanupBridge();
-        }
+            boolean shouldStopBridge;
+            synchronized (lifecycleLock) {
+                shouldStopBridge = bridgeInitialized;
+            }
 
-        // Now a pending connection can be processed
-        connectionAllowed.release();
+            if (shouldStopBridge) {
+                MoonBridge.stopConnection();
+                MoonBridge.cleanupBridge();
+            }
+
+            synchronized (lifecycleLock) {
+                bridgeInitialized = false;
+
+                // If startApp() is still performing HTTP work, it owns the
+                // permit until it observes 'stopping'. This prevents the next
+                // TV Activity from issuing a concurrent resume request.
+                if (!startInProgress) {
+                    releaseConnectionPermitLocked();
+                }
+            }
+        }
+    }
+
+    private void releaseConnectionPermitLocked() {
+        if (connectionPermitAcquired) {
+            connectionPermitAcquired = false;
+            connectionAllowed.release();
+        }
+    }
+
+    private void finishStartWithoutBridge() {
+        synchronized (lifecycleLock) {
+            startInProgress = false;
+            bridgeInitialized = false;
+            releaseConnectionPermitLocked();
+        }
     }
 
     private InetAddress resolveServerAddress() throws IOException {
@@ -381,50 +420,89 @@ public class NvConnection {
 
     public void start(final AudioRenderer audioRenderer, final VideoDecoderRenderer videoDecoderRenderer, final NvConnectionListener connectionListener)
     {
+        synchronized (lifecycleLock) {
+            if (startInProgress || connectionPermitAcquired || stopping) {
+                return;
+            }
+            startInProgress = true;
+        }
+
         new Thread(new Runnable() {
             public void run() {
                 context.connListener = connectionListener;
                 context.videoCapabilities = videoDecoderRenderer.getCapabilities();
 
+                if (stopping) {
+                    finishStartWithoutBridge();
+                    return;
+                }
+
                 String appName = context.streamConfig.getApp().getAppName();
 
                 context.connListener.stageStarting(appName);
 
+                // Acquire ownership before contacting Sunshine. This serializes
+                // session resume as well as Moonlight-core initialization, so a
+                // new TV Activity cannot race the previous Activity's teardown.
+                try {
+                    connectionAllowed.acquire();
+                } catch (InterruptedException e) {
+                    finishStartWithoutBridge();
+                    Thread.currentThread().interrupt();
+                    context.connListener.displayMessage(e.getMessage());
+                    context.connListener.stageFailed(appName, 0, 0);
+                    return;
+                }
+
+                synchronized (lifecycleLock) {
+                    connectionPermitAcquired = true;
+                    if (stopping) {
+                        finishStartWithoutBridge();
+                        return;
+                    }
+                }
+
                 try {
                     if (!startApp()) {
+                        finishStartWithoutBridge();
                         context.connListener.stageFailed(appName, 0, 0);
                         return;
                     }
                     context.connListener.stageComplete(appName);
                 } catch (HostHttpResponseException e) {
+                    finishStartWithoutBridge();
                     e.printStackTrace();
                     context.connListener.displayMessage(e.getMessage());
                     context.connListener.stageFailed(appName, 0, e.getErrorCode());
                     return;
                 } catch (XmlPullParserException | IOException e) {
+                    finishStartWithoutBridge();
                     e.printStackTrace();
                     context.connListener.displayMessage(e.getMessage());
                     context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, 0);
                     return;
                 }
 
-                ByteBuffer ib = ByteBuffer.allocate(16);
-                ib.putInt(context.riKeyId);
-
-                // Acquire the connection semaphore to ensure we only have one
-                // connection going at once.
-                try {
-                    connectionAllowed.acquire();
-                } catch (InterruptedException e) {
-                    context.connListener.displayMessage(e.getMessage());
-                    context.connListener.stageFailed(appName, 0, 0);
+                if (stopping) {
+                    finishStartWithoutBridge();
                     return;
                 }
+
+                ByteBuffer ib = ByteBuffer.allocate(16);
+                ib.putInt(context.riKeyId);
 
                 // Moonlight-core is not thread-safe with respect to connection start and stop, so
                 // we must not invoke that functionality in parallel.
                 synchronized (MoonBridge.class) {
+                    if (stopping) {
+                        finishStartWithoutBridge();
+                        return;
+                    }
+
                     MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
+                    synchronized (lifecycleLock) {
+                        bridgeInitialized = true;
+                    }
                     int ret = MoonBridge.startConnection(context.serverAddress.address,
                             context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
                             context.serverCodecModeSupport,
@@ -442,8 +520,13 @@ public class NvConnection {
                         // LiStartConnection() failed, so the caller is not expected
                         // to stop the connection themselves. We need to release their
                         // semaphore count for them.
-                        connectionAllowed.release();
+                        MoonBridge.cleanupBridge();
+                        finishStartWithoutBridge();
                         return;
+                    }
+
+                    synchronized (lifecycleLock) {
+                        startInProgress = false;
                     }
                 }
             }
